@@ -1,49 +1,221 @@
-import { useState } from 'react'
+import React, { useMemo, useState } from 'react'
 
-const filters = [
-  ['Region', 'LEC, W1, E4'], ['MO', 'DE'], ['Process', 'O2P E2E'],
-  ['Priority', '1, 2, 3'], ['Owner', 'All'], ['Promise date', 'Today, Future, History'],
+const referencesSeed = [
+  {
+    id: '47112345', region: 'LEC', mo: 'DE', priority: 1, owner: 'Credit Management', promiseDate: 'today',
+    exceptionGroup: 'Commercial / Order Entry', exception: 'Credit Block', deadline: '13:18', minutesLeft: 36,
+    status: 'NEW', value: 84000, atRisk: true, delayed: false, protected: false, actioned: false,
+    nextAction: 'Release Credit Block', actionLabel: 'Release Credit Block', system: 'SAP S/4 Credit Management',
+    crossImpact: 'Affects this reference only',
+    issue: 'The reference is blocked because the customer credit limit is exceeded. Release is required before the order cut-off.',
+    steps: ['Review open receivables', 'Check temporary credit limit', 'Confirm approval with Credit Management', 'Release credit block in SAP', 'Verify delivery creation'],
+  },
+  {
+    id: '47112588', region: 'W1', mo: 'NL', priority: 1, owner: 'Order Management', promiseDate: 'today',
+    exceptionGroup: 'Commercial / Order Entry', exception: 'Order Block', deadline: '13:30', minutesLeft: 48,
+    status: 'IN PROGRESS', value: 62000, atRisk: true, delayed: false, protected: false, actioned: false,
+    nextAction: 'Remove Order Block', actionLabel: 'Remove Order Block', system: 'SAP S/4 Sales Order',
+    crossImpact: 'Affects this reference only',
+    issue: 'A manual order block prevents delivery creation although material is available.',
+    steps: ['Review block reason', 'Confirm approval with order owner', 'Remove order block', 'Reprocess delivery creation', 'Validate confirmed promise date'],
+  },
+  {
+    id: '47112641', region: 'E4', mo: 'AT', priority: 1, owner: 'Customer Service', promiseDate: 'today',
+    exceptionGroup: 'Commercial / Order Entry', exception: 'Incomplete Address', deadline: '13:42', minutesLeft: 60,
+    status: 'NEW', value: 19000, atRisk: true, delayed: false, protected: false, actioned: false,
+    nextAction: 'Update Address in Master Data', actionLabel: 'Update Address in Master Data', system: 'SAP Business Partner Master Data',
+    crossImpact: 'May affect future references for this ship-to party',
+    issue: 'The ship-to address is incomplete and cannot be processed reliably by the carrier.',
+    steps: ['Call customer to confirm address', 'Correct street and house number', 'Validate postal code and city', 'Update business partner master data', 'Reprocess delivery and label creation'],
+  },
+  {
+    id: '47111903', region: 'LEC', mo: 'DE', priority: 2, owner: 'Inbound Warehouse', promiseDate: 'today',
+    exceptionGroup: 'Fulfillment / Warehouse', exception: 'Inbound Execution', deadline: '14:00', minutesLeft: 78,
+    status: 'IN PROGRESS', value: 41000, atRisk: true, delayed: false, protected: false, actioned: false,
+    nextAction: 'Prioritize Inbound Put-away', actionLabel: 'Prioritize Inbound', system: 'SAP EWM Inbound Monitor',
+    crossImpact: '5 additional express references affected',
+    issue: 'Missing inbound stock for Article 234 – Drill Set affects five additional express references due today.',
+    steps: ['Locate inbound handling unit', 'Confirm unloading status', 'Prioritize quality and quantity check', 'Move handling unit to priority put-away', 'Post put-away and trigger ATP recheck'],
+  },
+  {
+    id: '47112802', region: 'W1', mo: 'BE', priority: 2, owner: 'Warehouse', promiseDate: 'future',
+    exceptionGroup: 'Fulfillment / Warehouse', exception: 'Backorder Focus', deadline: '14:15', minutesLeft: 93,
+    status: 'MONITOR', value: 36000, atRisk: true, delayed: false, protected: false, actioned: false,
+    nextAction: 'Prioritize Picking', actionLabel: 'Prioritize Picking', system: 'SAP EWM Warehouse Monitor',
+    crossImpact: '3 references compete for the same stock',
+    issue: 'Available stock is not yet allocated to the highest-priority express references.',
+    steps: ['Review competing requirements', 'Validate allocation priority', 'Move reference into priority wave', 'Release warehouse task', 'Confirm picking start'],
+  },
+  {
+    id: '47112017', region: 'E4', mo: 'CH', priority: 2, owner: 'Transport', promiseDate: 'future',
+    exceptionGroup: 'Transport', exception: 'Transport Planning', deadline: '17:15', minutesLeft: 273,
+    status: 'NEW', value: 23000, atRisk: true, delayed: false, protected: false, actioned: false,
+    nextAction: 'Assign Carrier', actionLabel: 'Assign Carrier', system: 'SAP TM Transportation Cockpit',
+    crossImpact: '2 references on the same route',
+    issue: 'No carrier has been assigned although the shipping window is approaching.',
+    steps: ['Review route and service level', 'Check carrier capacity', 'Assign carrier', 'Tender shipment', 'Confirm acceptance'],
+  },
+  {
+    id: '47113111', region: 'LEC', mo: 'DE', priority: 3, owner: 'Transport', promiseDate: 'history',
+    exceptionGroup: 'Transport', exception: 'Missing Documents', deadline: '16:30', minutesLeft: -42,
+    status: 'DELAYED', value: 12000, atRisk: false, delayed: true, protected: false, actioned: false,
+    nextAction: 'Request Missing Documents', actionLabel: 'Request Documents', system: 'Export Documentation',
+    crossImpact: 'Affects this reference only',
+    issue: 'Required export documents were not available before the final shipping cut-off.',
+    steps: ['Identify missing document', 'Request document from responsible owner', 'Attach document to shipment', 'Confirm customs completeness', 'Reschedule transport'],
+  },
 ]
 
-const kpis = [
-  ['References at risk', '216', '€1.48m reference value', 'warning'],
-  ['References delayed', '58', '€412k · No longer recoverable', 'critical'],
-  ['P1 · Act now', '31', 'Cut-off in less than 60 min', 'critical'],
-  ['Promises protected', '71', 'Today', 'success'],
-  ['Actioned', '143', 'Today', 'purple'],
-]
+const formatValue = (value) => new Intl.NumberFormat('en-US', { style: 'currency', currency: 'EUR', maximumFractionDigits: 0 }).format(value)
 
-const references = [
-  {priority:'P1',reference:'47112345',exception:'Credit block',deadline:'13:18',remaining:'36 min',owner:'Credit Management',action:'Release Credit Block',status:'New',value:'€84k',impact:'None',customer:'Key Account Germany',promise:'Today 18:00',probability:92,issue:'The reference is blocked because the customer credit limit has been exceeded.',recommendation:'Review the customer exposure and release the block before the order cut-off.'},
-  {priority:'P1',reference:'47112588',exception:'Order block',deadline:'13:30',remaining:'48 min',owner:'Order Management',action:'Remove Order Block',status:'In progress',value:'€62k',impact:'2 linked references',customer:'Strategic Account',promise:'Today 18:00',probability:87,issue:'A manual order block prevents delivery creation.',recommendation:'Validate the blocking reason and remove the order block if the release criteria are met.'},
-  {priority:'P1',reference:'47112641',exception:'Incomplete address',deadline:'13:42',remaining:'60 min',owner:'Customer Service',action:'Correct Address in ERP',status:'New',value:'€19k',impact:'None',customer:'Direct Customer',promise:'Today 18:00',probability:81,issue:'The ship-to address is incomplete and cannot be used for carrier label creation.',recommendation:'Call the customer, confirm the missing address details and update the ship-to address in ERP.'},
-  {priority:'P2',reference:'47111903',exception:'Inbound execution delay',deadline:'14:00',remaining:'78 min',owner:'Inbound Warehouse',action:'Prioritize Put-away',status:'Actioned',value:'€41k',impact:'5 additional express references',customer:'Key Account Austria',promise:'Today 18:00',probability:69,putaway:true,issue:'Missing inbound stock for Article 234 – Drill Set affects five additional express orders due today.',recommendation:'Prioritize the put-away of Article 234 and confirm stock availability immediately after the 411 posting.'},
-  {priority:'P2',reference:'47112802',exception:'Backorder focus',deadline:'14:15',remaining:'93 min',owner:'Warehouse',action:'Prioritize Picking',status:'In progress',value:'€36k',impact:'3 linked references',customer:'Direct Customer',promise:'Today 18:00',probability:66,issue:'A constrained article is required by multiple express references in today’s wave.',recommendation:'Prioritize the affected picking tasks and confirm completion before the warehouse cut-off.'},
-  {priority:'P2',reference:'47112017',exception:'Transport planning delay',deadline:'14:00',remaining:'78 min',owner:'Transport',action:'Assign Carrier',status:'Monitor',value:'€23k',impact:'8 references on route',customer:'Key Account Switzerland',promise:'Tomorrow 10:00',probability:57,issue:'No carrier and route have been assigned to the planned shipment.',recommendation:'Assign the approved route and carrier before the transport-planning cut-off.'},
-  {priority:'P3',reference:'47113111',exception:'Missing documents',deadline:'16:30',remaining:'168 min',owner:'Transport',action:'Request Documents',status:'New',value:'€12k',impact:'4 references in shipment',customer:'Export Customer',promise:'Tomorrow 12:00',probability:43,issue:'Required export documents are missing for the shipment.',recommendation:'Request the missing documents and attach them to the shipment before loading.'},
-]
+function App() {
+  const [filters, setFilters] = useState({ region: 'All', mo: 'All', priority: 'All', owner: 'All', promiseDate: 'today' })
+  const [references, setReferences] = useState(referencesSeed)
+  const [selectedId, setSelectedId] = useState(referencesSeed[0].id)
+  const [actionId, setActionId] = useState(null)
 
-const groups = [
-  ['Commercial / Order Entry', [['Credit Block',54],['Incomplete Address',46],['Order Blocks',34]]],
-  ['Fulfillment / Warehouse', [['Warehouse Execution',62],['Inbound Execution',45],['Backorder Focus',33]]],
-  ['Transport', [['Transport Planning',48],['Transport Execution',36],['Missing Documents',22]]],
-]
+  const filtered = useMemo(() => references.filter((r) => {
+    return (filters.region === 'All' || r.region === filters.region)
+      && (filters.mo === 'All' || r.mo === filters.mo)
+      && (filters.priority === 'All' || String(r.priority) === filters.priority)
+      && (filters.owner === 'All' || r.owner === filters.owner)
+      && (filters.promiseDate === 'All' || r.promiseDate === filters.promiseDate)
+  }), [filters, references])
 
-const css = `
-:root{font-family:Inter,ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif;color:#20242b;background:#f4f5f7}*{box-sizing:border-box}body{margin:0;background:#f4f5f7}button{font:inherit}.topbar{min-height:82px;background:#df0712;color:#fff;display:flex;align-items:center;padding:0 36px;gap:28px}.brand{font-size:30px;font-weight:900}.context{font-size:16px;flex:1}.live{background:#fff;color:#d71920;border:0;border-radius:9px;padding:12px 20px;font-weight:850}.dashboard,.action-page{padding:18px 26px 30px;max-width:1920px;margin:auto}.filterbar{background:#fff;border:1px solid #d9dde3;border-radius:14px;padding:12px;display:grid;grid-template-columns:repeat(6,1fr);gap:22px}.filter{position:relative;text-align:left;background:#fff;border:1px solid #d6dbe2;border-radius:7px;padding:8px 34px 8px 12px}.filter span{display:block;font-size:12px;color:#5f6670;margin-bottom:6px}.filter strong{font-size:15px}.chev{position:absolute;right:12px;bottom:10px}.kpis{display:grid;grid-template-columns:repeat(5,1fr);gap:16px;margin:16px 0}.kpi{border-radius:14px;padding:18px 20px;min-height:116px;display:flex;flex-direction:column;justify-content:space-between}.kpi span{font-size:13px;font-weight:850;text-transform:uppercase;color:#555b64}.kpi strong{font-size:31px}.kpi small{color:#626872}.warning{background:#fff2d4;color:#9a6900}.critical{background:#fde7e7;color:#cf111b}.success{background:#e5f5eb;color:#257a49}.purple{background:#f0e8f8;color:#704190}.grid{display:grid;grid-template-columns:minmax(0,2fr) minmax(360px,.95fr);gap:18px}.maincol{display:flex;flex-direction:column;gap:18px}.panel{background:#fff;border:1px solid #d9dde3;border-radius:15px;box-shadow:0 4px 16px rgba(25,30,40,.04)}.panel h2{margin:0 0 6px;font-size:20px}.heading{padding:18px 20px 12px}.heading p,.panel p{margin:0;color:#68707a;font-size:13px}.tablewrap{overflow:auto;padding:0 16px 16px}table{border-collapse:collapse;width:100%;font-size:12px;min-width:1180px}th{background:#eceef1;text-align:left;padding:11px 9px;color:#4f5660}td{padding:11px 9px;border-bottom:1px solid #e8ebef}.priority{display:inline-flex;min-width:44px;height:28px;align-items:center;justify-content:center;border-radius:7px;color:#fff;font-weight:900}.p1{background:#dc111b}.p2{background:#efa500}.p3{background:#1f9a52}.impact{display:inline-block;background:#fff0cc;color:#8b6200;border-radius:999px;padding:5px 8px;font-weight:750}.none{color:#8a9098}.actionbtn{display:flex;align-items:center;justify-content:space-between;gap:8px;min-width:170px;padding:8px 10px;border-radius:7px;background:#fff;font-weight:750;cursor:pointer}.actionbtn.p1b{border:1px solid #e73840;color:#d71920}.actionbtn.p2b{border:1px solid #efa500;color:#bd7d00}.actionbtn.p3b{border:1px solid #249957;color:#207c49}.journey{padding:18px 20px}.stepsline{display:grid;grid-template-columns:repeat(5,1fr);margin-top:12px}.step{text-align:center;font-size:12px}.track{display:flex;align-items:center;margin:10px 0;position:relative}.dot{width:20px;height:20px;border-radius:50%;margin:auto;z-index:2}.line{position:absolute;left:50%;width:100%;height:3px;background:#d9dde3}.done .dot{background:#249957}.active .dot,.pending .dot{background:#efa500}.crit .dot{background:#dc111b}.exceptions{padding:20px}.group{margin-top:22px}.group h3{text-transform:uppercase;font-size:12px}.barrow{margin-bottom:14px}.barlabel{display:flex;justify-content:space-between;font-size:13px;margin-bottom:6px}.bartrack{height:12px;background:#e8ebef}.bartrack span{display:block;height:100%;background:#df0712}.actiontop{display:flex;justify-content:space-between;margin-bottom:16px}.back{border:0;background:transparent;font-weight:800;cursor:pointer}.actiongrid{display:grid;grid-template-columns:minmax(0,2fr) minmax(300px,.75fr);gap:18px}.actionmain,.sidecard{padding:22px}.actionhead{display:flex;justify-content:space-between;gap:20px;border-bottom:1px solid #e5e8ec;padding-bottom:20px}.actionhead h1{margin:5px 0;font-size:29px}.eyebrow{font-size:11px;font-weight:900;color:#d71920;letter-spacing:1px}.deadline{background:#fde7e7;color:#bd151c;border-radius:9px;padding:11px 13px;font-weight:850;height:fit-content}.alert{background:#fff4d8;border-left:5px solid #efa500;padding:16px;margin:22px 0;border-radius:8px}.dependency{background:#f6eefe;border:1px solid #e2d3f2;color:#583375;padding:17px;border-radius:11px;margin-bottom:20px}.checklist{display:grid;gap:12px;margin-top:16px}.checklist label{background:#f7f8fa;padding:13px;border-radius:8px}.footer{display:flex;justify-content:flex-end;gap:12px;margin-top:28px}.secondary,.primary{border-radius:8px;padding:11px 15px;font-weight:800;cursor:pointer}.secondary{background:#fff;border:1px solid #cfd4da}.primary{background:#d71920;color:#fff;border:1px solid #d71920}.sides{display:flex;flex-direction:column;gap:18px}.sidecard dl{margin:14px 0 0}.sidecard dl div{display:flex;justify-content:space-between;padding:11px 0;border-bottom:1px solid #e7eaee}.sidecard dd{font-weight:750}.activity p{padding:9px 0;border-bottom:1px solid #eceef1}@media(max-width:1100px){.filterbar{grid-template-columns:repeat(3,1fr)}.kpis{grid-template-columns:repeat(3,1fr)}.grid,.actiongrid{grid-template-columns:1fr}}@media(max-width:700px){.topbar{padding:16px;flex-wrap:wrap}.context{display:none}.dashboard,.action-page{padding:14px}.filterbar,.kpis{grid-template-columns:1fr 1fr}.actionhead{flex-direction:column}}@media(max-width:480px){.filterbar,.kpis{grid-template-columns:1fr}}
+  const selected = filtered.find((r) => r.id === selectedId) || filtered[0] || null
+  const actionReference = references.find((r) => r.id === actionId)
+
+  const kpis = useMemo(() => ({
+    atRisk: filtered.filter((r) => r.atRisk).length,
+    delayed: filtered.filter((r) => r.delayed).length,
+    p1: filtered.filter((r) => r.priority === 1 && !r.delayed).length,
+    protected: filtered.filter((r) => r.protected).length,
+    actioned: filtered.filter((r) => r.actioned).length,
+  }), [filtered])
+
+  const exceptionProfile = useMemo(() => {
+    const groups = {}
+    filtered.forEach((r) => {
+      groups[r.exceptionGroup] ??= {}
+      groups[r.exceptionGroup][r.exception] = (groups[r.exceptionGroup][r.exception] || 0) + 1
+    })
+    return groups
+  }, [filtered])
+
+  const markActioned = (id, note) => {
+    setReferences((current) => current.map((r) => r.id === id ? {
+      ...r, status: 'ACTIONED', actioned: true, atRisk: false, protected: !r.delayed,
+      resolutionNote: note || 'Action completed in pilot mock-up.'
+    } : r))
+    setSelectedId(id)
+    setActionId(null)
+  }
+
+  if (actionReference) {
+    return <ActionPage reference={actionReference} onBack={() => setActionId(null)} onComplete={markActioned} />
+  }
+
+  return (
+    <div className="app-shell">
+      <style>{styles}</style>
+      <header className="header">
+        <div><h1>ORDER CONTROL TOWER</h1><p>Interactive pilot v3 · Dynamic journey and action workflow</p></div>
+        <span className="live-badge">LIVE DATA · 2 MIN</span>
+      </header>
+
+      <FilterBar filters={filters} setFilters={setFilters} references={references} />
+
+      <section className="kpi-grid">
+        <Kpi title="REFERENCES AT RISK" value={kpis.atRisk} hint={`${formatValue(filtered.filter(r => r.atRisk).reduce((s,r)=>s+r.value,0))} value`} tone="amber" />
+        <Kpi title="REFERENCES DELAYED" value={kpis.delayed} hint="Can no longer be protected" tone="red" />
+        <Kpi title="P1 · ACT NOW" value={kpis.p1} hint="Immediate action required" tone="red" />
+        <Kpi title="PROMISES PROTECTED" value={kpis.protected} hint="Within current filter" tone="green" />
+        <Kpi title="ACTIONED" value={kpis.actioned} hint="Completed interventions" tone="purple" />
+      </section>
+
+      <main className="content-grid">
+        <section className="panel worklist-panel">
+          <div className="panel-heading">
+            <div><h2>PRIORITIZED ACTION WORKLIST</h2><p>Filters update this list, the KPIs and the exception profile.</p></div>
+            <span className="count-pill">{filtered.length} references</span>
+          </div>
+
+          <div className="table-wrap">
+            <table>
+              <thead><tr><th>Priority</th><th>Reference</th><th>Exception</th><th>Action deadline</th><th>Action</th><th>Owner</th><th>Cross-reference impact</th><th>Status</th></tr></thead>
+              <tbody>
+                {filtered.map((r) => (
+                  <tr key={r.id} className={selected?.id === r.id ? 'selected-row' : ''} onClick={() => setSelectedId(r.id)}>
+                    <td><span className={`priority p${r.priority}`}>P{r.priority}</span></td>
+                    <td><strong>{r.id}</strong><small>{r.region} · {r.mo}</small></td>
+                    <td>{r.exception}</td>
+                    <td><strong>{r.deadline}</strong><small>{r.minutesLeft >= 0 ? `${r.minutesLeft} min left` : `${Math.abs(r.minutesLeft)} min overdue`}</small></td>
+                    <td><button className="action-btn" onClick={(e) => { e.stopPropagation(); setSelectedId(r.id); setActionId(r.id) }}>{r.actionLabel} ↗</button></td>
+                    <td>{r.owner}</td>
+                    <td><span className={r.crossImpact.includes('additional') || r.crossImpact.includes('compete') ? 'impact-high' : ''}>{r.crossImpact}</span></td>
+                    <td><span className={`status ${r.status.toLowerCase().replaceAll(' ','-')}`}>{r.status}</span></td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+            {filtered.length === 0 && <div className="empty">No references match the selected filters.</div>}
+          </div>
+
+          <Journey reference={selected} />
+        </section>
+
+        <ExceptionProfile groups={exceptionProfile} />
+      </main>
+    </div>
+  )
+}
+
+function FilterBar({ filters, setFilters, references }) {
+  const owners = ['All', ...new Set(references.map((r) => r.owner))]
+  const update = (key, value) => setFilters((f) => ({ ...f, [key]: value }))
+  const items = [
+    ['Region','region',['All','LEC','W1','E4']],
+    ['MO','mo',['All','DE','NL','BE','AT','CH']],
+    ['Priority','priority',['All','1','2','3']],
+    ['Owner','owner',owners],
+    ['Promise Date','promiseDate',['All','today','future','history']],
+  ]
+  return <section className="filters">{items.map(([label,key,options]) => <label key={key}><span>{label}</span><select value={filters[key]} onChange={(e)=>update(key,e.target.value)}>{options.map(o=><option key={o}>{o}</option>)}</select></label>)}<button className="reset-btn" onClick={()=>setFilters({region:'All',mo:'All',priority:'All',owner:'All',promiseDate:'today'})}>Reset filters</button></section>
+}
+
+function Kpi({ title, value, hint, tone }) { return <div className={`kpi ${tone}`}><span>{title}</span><strong>{value}</strong><small>{hint}</small></div> }
+
+function Journey({ reference }) {
+  if (!reference) return null
+  const nodes = reference.actioned
+    ? [
+        ['12:47','Risk detected','done'], ['12:49','Owner alerted','done'], ['12:56','Action started','done'],
+        [reference.deadline,'Action completed','done'], ['14:00', reference.delayed ? 'Recovery documented' : 'Promise protected','done']
+      ]
+    : [
+        ['12:47','Risk detected','done'], ['12:49','Owner alerted','done'], ['12:56','Action started','active'],
+        [reference.deadline,'Target resolution','active'], ['14:00','Operational cut-off','late']
+      ]
+  return <div className="journey"><h3>SELECTED REFERENCE JOURNEY · {reference.id}</h3><div className="timeline">{nodes.map((n,i)=><div className="node" key={i}><strong>{n[0]}</strong><span className={`dot ${n[2]}`}></span><small>{n[1]}</small></div>)}</div></div>
+}
+
+function ExceptionProfile({ groups }) {
+  const max = Math.max(1, ...Object.values(groups).flatMap(g => Object.values(g)))
+  return <aside className="panel exception-panel"><h2>EXCEPTION PROFILE</h2>{Object.keys(groups).length===0 && <p className="empty">No exceptions for this selection.</p>}{Object.entries(groups).map(([group,items])=><div className="profile-group" key={group}><h3>{group.toUpperCase()}</h3>{Object.entries(items).map(([name,count])=><div className="bar-row" key={name}><div className="bar-label"><span>{name}</span><strong>{count}</strong></div><div className="bar-track"><div className="bar-fill" style={{width:`${Math.max(10,(count/max)*100)}%`}} /></div></div>)}</div>)}</aside>
+}
+
+function ActionPage({ reference, onBack, onComplete }) {
+  const [checked, setChecked] = useState(reference.steps.map(()=>false))
+  const [note, setNote] = useState('')
+  const completed = checked.filter(Boolean).length
+  const toggle = (i) => setChecked((items)=>items.map((v,index)=>index===i?!v:v))
+  return <div className="action-page"><style>{styles}</style><header className="header"><div><h1>ACTION WORKSPACE</h1><p>Reference {reference.id} · {reference.exception}</p></div><button className="header-back" onClick={onBack}>← Back to Control Tower</button></header><main className="action-layout"><section className="panel action-main"><span className={`priority p${reference.priority}`}>P{reference.priority}</span><h2>{reference.actionLabel}</h2><p className="issue-text">{reference.issue}</p><div className="info-grid"><Info label="Owner" value={reference.owner}/><Info label="Deadline" value={`${reference.deadline} · ${reference.minutesLeft >= 0 ? reference.minutesLeft+' min left' : 'overdue'}`}/><Info label="Source system" value={reference.system}/><Info label="Cross-reference impact" value={reference.crossImpact}/></div><h3>Recommended resolution workflow</h3><div className="checklist">{reference.steps.map((step,i)=><label key={step} className={checked[i]?'checked':''}><input type="checkbox" checked={checked[i]} onChange={()=>toggle(i)}/><span>{i+1}</span><p>{step}</p></label>)}</div><label className="note-label">Resolution note<textarea value={note} onChange={(e)=>setNote(e.target.value)} placeholder="Document what was changed, who confirmed it and whether the customer promise is protected." /></label><div className="action-footer"><button className="secondary-btn" onClick={()=>alert(`Prototype: open ${reference.system}`)}>Open source system ↗</button><button className="complete-btn" disabled={completed!==reference.steps.length} onClick={()=>onComplete(reference.id,note)}>Mark as actioned</button></div></section><aside className="panel side-summary"><h3>Action progress</h3><div className="progress-number">{completed}/{reference.steps.length}</div><div className="progress-track"><div style={{width:`${(completed/reference.steps.length)*100}%`}} /></div><p>Complete all steps before closing the action.</p><h3>Expected outcome</h3><p>{reference.delayed ? 'The failure cannot be prevented. The action documents recovery and customer communication.' : 'The exception is removed before cut-off and the customer promise remains achievable.'}</p></aside></main></div>
+}
+function Info({label,value}) { return <div className="info-card"><span>{label}</span><strong>{value}</strong></div> }
+
+const styles = `
+*{box-sizing:border-box}body{margin:0;font-family:Inter,Arial,sans-serif;background:#f4f5f7;color:#20242a}.app-shell,.action-page{min-height:100vh}.header{height:92px;background:#d71920;color:white;display:flex;align-items:center;justify-content:space-between;padding:0 34px}.header h1{margin:0;font-size:30px;letter-spacing:.3px}.header p{margin:6px 0 0;color:#ffe3e4}.live-badge,.header-back{background:white;color:#d71920;border:0;border-radius:9px;padding:13px 18px;font-weight:800}.filters{margin:20px 28px;display:grid;grid-template-columns:repeat(5,minmax(130px,1fr)) auto;gap:14px;background:white;padding:18px;border:1px solid #dfe2e7;border-radius:14px}.filters label span{display:block;font-size:11px;font-weight:800;color:#68707b;text-transform:uppercase;margin-bottom:7px}.filters select{width:100%;padding:11px;border:1px solid #cfd4dc;border-radius:8px;background:white;font-weight:700}.reset-btn{align-self:end;padding:11px 16px;border:1px solid #cfd4dc;background:#f7f8fa;border-radius:8px;font-weight:700}.kpi-grid{display:grid;grid-template-columns:repeat(5,1fr);gap:16px;margin:0 28px 20px}.kpi{border-radius:14px;padding:18px 20px;min-height:118px}.kpi span{font-size:13px;font-weight:800;color:#565d67}.kpi strong{display:block;font-size:34px;margin:10px 0 5px}.kpi small{color:#5f6670}.amber{background:#fff4d8}.amber strong{color:#9a6a00}.red{background:#fde5e5}.red strong{color:#b31217}.green{background:#e3f4ea}.green strong{color:#217a47}.purple{background:#f0e9f8}.purple strong{color:#6d3a8a}.content-grid{display:grid;grid-template-columns:minmax(0,2.4fr) minmax(330px,1fr);gap:18px;margin:0 28px 28px}.panel{background:white;border:1px solid #dfe2e7;border-radius:14px}.worklist-panel{padding:22px}.panel-heading{display:flex;justify-content:space-between;align-items:flex-start}.panel h2{margin:0;font-size:21px}.panel-heading p{margin:7px 0 18px;color:#68707b}.count-pill{background:#eef0f3;border-radius:20px;padding:8px 12px;font-weight:700;color:#555}.table-wrap{overflow:auto}table{width:100%;border-collapse:collapse;font-size:13px}th{text-align:left;background:#eceef1;padding:12px;color:#4f5660;white-space:nowrap}td{padding:12px;border-bottom:1px solid #eceef1;vertical-align:middle}tbody tr{cursor:pointer}tbody tr:hover,.selected-row{background:#fff8f8}td small{display:block;color:#7a818b;margin-top:4px}.priority{display:inline-block;border-radius:7px;color:white;padding:7px 10px;font-weight:800}.p1{background:#d71920}.p2{background:#f2a900}.p3{background:#26925d}.status{font-size:11px;font-weight:800}.status.actioned{color:#217a47}.status.delayed{color:#b31217}.impact-high{color:#b31217;font-weight:800}.action-btn{border:1px solid #d71920;color:#d71920;background:white;border-radius:7px;padding:8px 10px;font-weight:800;white-space:nowrap}.action-btn:hover{background:#d71920;color:white}.empty{padding:30px;color:#777;text-align:center}.journey{margin-top:24px;border-top:1px solid #e3e5e8;padding-top:20px}.journey h3{font-size:15px}.timeline{display:flex;justify-content:space-between;position:relative;margin:28px 20px 10px}.timeline:before{content:'';position:absolute;top:38px;left:4%;right:4%;height:4px;background:#cdd1d7}.node{position:relative;text-align:center;width:19%;z-index:1}.node strong,.node small{display:block}.node small{margin-top:10px;color:#666}.dot{display:block;width:20px;height:20px;border-radius:50%;margin:11px auto 0}.dot.done{background:#217a47}.dot.active{background:#f2a900}.dot.late{background:#d71920}.exception-panel{padding:22px}.profile-group{margin-top:24px}.profile-group h3{font-size:12px;color:#747b84;letter-spacing:.5px}.bar-row{margin:12px 0}.bar-label{display:flex;justify-content:space-between;font-size:13px}.bar-track{height:12px;background:#eceef1;border-radius:8px;margin-top:6px;overflow:hidden}.bar-fill{height:100%;background:#d71920;border-radius:8px}.action-layout{display:grid;grid-template-columns:minmax(0,2fr) 360px;gap:20px;padding:28px}.action-main,.side-summary{padding:28px}.action-main h2{font-size:30px;margin:14px 0 8px}.issue-text{font-size:18px;line-height:1.5;color:#4f5660}.info-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:12px;margin:24px 0}.info-card{background:#f5f6f8;border-radius:10px;padding:16px}.info-card span{display:block;font-size:11px;color:#737b85;text-transform:uppercase;font-weight:800}.info-card strong{display:block;margin-top:7px}.checklist label{display:flex;align-items:center;gap:12px;border:1px solid #dfe2e7;border-radius:10px;padding:12px;margin:9px 0}.checklist label.checked{background:#eaf6ef;border-color:#75b690}.checklist input{width:18px;height:18px}.checklist label>span{width:27px;height:27px;border-radius:50%;background:#eceef1;display:grid;place-items:center;font-weight:800}.checklist p{margin:0}.note-label{display:block;margin-top:22px;font-weight:800}.note-label textarea{display:block;width:100%;height:110px;margin-top:8px;padding:12px;border:1px solid #cfd4dc;border-radius:9px;font:inherit}.action-footer{display:flex;justify-content:space-between;margin-top:20px}.secondary-btn,.complete-btn{padding:12px 18px;border-radius:8px;font-weight:800}.secondary-btn{background:white;border:1px solid #9097a1}.complete-btn{background:#217a47;color:white;border:0}.complete-btn:disabled{background:#bfc4ca}.side-summary h3{margin-top:0}.progress-number{font-size:44px;font-weight:900;color:#d71920}.progress-track{height:12px;background:#eceef1;border-radius:8px;overflow:hidden;margin:12px 0 20px}.progress-track div{height:100%;background:#217a47}.side-summary p{line-height:1.5;color:#5f6670}
+@media(max-width:1100px){.filters{grid-template-columns:repeat(3,1fr)}.kpi-grid{grid-template-columns:repeat(2,1fr)}.content-grid,.action-layout{grid-template-columns:1fr}.exception-panel{order:2}}@media(max-width:700px){.header{height:auto;padding:22px;gap:20px}.header h1{font-size:22px}.filters{grid-template-columns:1fr}.kpi-grid{grid-template-columns:1fr}.content-grid{margin:0 12px 20px}.action-layout{padding:12px}.info-grid{grid-template-columns:1fr}}
 `
 
-function Header(){return <header className="topbar"><div className="brand">ORDER CONTROL TOWER</div><div className="context">Pilot | Order management | Europe Region | 17 Jul 2026 · 12:42</div><button className="live">● LIVE DATA · 2 MIN</button></header>}
-
-function Dashboard({open}){const max=62;return <main className="dashboard">
-  <section className="filterbar">{filters.map(([l,v])=><button className="filter" key={l}><span>{l}</span><strong>{v}</strong><b className="chev">⌄</b></button>)}</section>
-  <section className="kpis">{kpis.map(([l,v,d,t])=><article className={`kpi ${t}`} key={l}><span>{l}</span><strong>{v}</strong><small>{d}</small></article>)}</section>
-  <section className="grid"><div className="maincol">
-    <section className="panel"><div className="heading"><h2>PRIORITIZED ACTION WORKLIST</h2><p>References are ranked by customer impact, failure probability, time criticality and recoverability.</p></div><div className="tablewrap"><table><thead><tr><th>Priority</th><th>Reference</th><th>Exception</th><th>Action deadline</th><th>Owner</th><th>Cross-reference impact</th><th>Status</th><th>Value</th><th>Action</th></tr></thead><tbody>{references.map(r=><tr key={r.reference}><td><span className={`priority ${r.priority.toLowerCase()}`}>{r.priority}</span></td><td><strong>{r.reference}</strong></td><td>{r.exception}</td><td><strong>{r.deadline} · {r.remaining}</strong></td><td>{r.owner}</td><td><span className={r.impact==='None'?'none':'impact'}>{r.impact}</span></td><td>{r.status}</td><td><strong>{r.value}</strong></td><td><button className={`actionbtn ${r.priority.toLowerCase()}b`} onClick={()=>open(r)}>{r.action}<span>↗</span></button></td></tr>)}</tbody></table></div></section>
-    <section className="panel journey"><h2>SELECTED REFERENCE JOURNEY · 47112345</h2><div className="stepsline">{[['12:47','Risk detected','done'],['12:49','Owner alerted','done'],['12:56','Action started','active'],['13:18','Target resolution','pending'],['14:00','Order cut-off','crit']].map(([t,l,s],i)=><div className={`step ${s}`} key={l}><strong>{t}</strong><div className="track"><span className="dot"/>{i<4&&<span className="line"/>}</div><span>{l}</span></div>)}</div></section>
-  </div><section className="panel exceptions"><h2>EXCEPTION PROFILE</h2>{groups.map(([g,items])=><div className="group" key={g}><h3>{g}</h3>{items.map(([l,v])=><div className="barrow" key={l}><div className="barlabel"><span>{l}</span><strong>{v}</strong></div><div className="bartrack"><span style={{width:`${v/max*100}%`}}/></div></div>)}</div>)}</section></section>
-</main>}
-
-function ActionPage({r,back}){return <main className="action-page"><div className="actiontop"><button className="back" onClick={back}>← Back to worklist</button><span className={`priority ${r.priority.toLowerCase()}`}>{r.priority}</span></div><div className="actiongrid"><section className="panel actionmain"><div className="actionhead"><div><span className="eyebrow">REFERENCE {r.reference}</span><h1>{r.action}</h1><p>{r.exception}</p></div><span className="deadline">◷ {r.deadline} · {r.remaining} remaining</span></div><div className="alert"><strong>Why action is required</strong><p>{r.issue}</p></div>{r.putaway&&<div className="dependency"><strong>Cross-reference impact</strong><p>Missing inbound stock for <b>Article 234 – Drill Set</b> affects <b>five additional express orders due today</b>.</p></div>}<section><h2>Recommended action</h2><p>{r.recommendation}</p><div className="checklist"><label><input type="checkbox"/> Validate the exception and affected reference data</label><label><input type="checkbox"/> Execute the operational action in the source system</label><label><input type="checkbox"/> Confirm completion and update the Control Tower status</label></div></section><div className="footer"><button className="secondary">Open source system ↗</button><button className="primary">✓ Mark as actioned</button></div></section><aside className="sides"><section className="panel sidecard"><h2>Reference details</h2><dl>{[['Customer',r.customer],['Promise',r.promise],['Owner',r.owner],['Reference value',r.value],['Failure probability',`${r.probability}%`],['Cross-reference impact',r.impact]].map(([a,b])=><div key={a}><dt>{a}</dt><dd>{b}</dd></div>)}</dl></section><section className="panel sidecard activity"><h2>Activity</h2><p><b>12:47</b> Risk detected</p><p><b>12:49</b> Owner alerted</p><p><b>12:56</b> Action page opened</p></section></aside></div></main>}
-
-export default function App(){const [active,setActive]=useState(null);return <div><style>{css}</style><Header/>{active?<ActionPage r={active} back={()=>setActive(null)}/>:<Dashboard open={setActive}/>}</div>}
+export default App
